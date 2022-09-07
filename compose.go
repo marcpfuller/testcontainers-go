@@ -165,6 +165,45 @@ func (dc *LocalDockerCompose) containerNameFromServiceName(service, separator st
 	return dc.Identifier + separator + service
 }
 
+func (dc *LocalDockerCompose) GetServiceContainer(service string) (Container, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		return nil, err
+	}
+
+	cli.NegotiateAPIVersion(context.Background())
+
+	containerName := dc.containerNameFromServiceName(service, "_")
+	composeV2ContainerName := dc.containerNameFromServiceName(service, "-")
+	f := filters.NewArgs(
+		filters.Arg("name", containerName),
+		filters.Arg("name", composeV2ContainerName),
+		filters.Arg("name", service))
+	containerListOptions := types.ContainerListOptions{Filters: f}
+	containers, err := cli.ContainerList(context.Background(), containerListOptions)
+	if err != nil {
+		return nil, fmt.Errorf("error %w occured while filtering the service %s by name", err, service)
+	}
+
+	if len(containers) == 0 {
+		return nil, fmt.Errorf("service with name %s not found in list of running containers", service)
+	}
+
+	// The length should always be a list of 1, since we are matching one service name at a time
+	if l := len(containers); l > 1 {
+		return nil, fmt.Errorf("expecting only one running container for %s but got %d", service, l)
+	}
+
+	container := containers[0]
+	dockerProvider, err := NewDockerProvider(WithLogger(dc.Logger))
+	if err != nil {
+		return nil, fmt.Errorf("unable to create new Docker Provider: %w", err)
+	}
+	dockercontainer := &DockerContainer{ID: container.ID, WaitingFor: nil, provider: dockerProvider, logger: dc.Logger}
+	return dockercontainer, nil
+
+}
+
 func (dc *LocalDockerCompose) applyStrategyToRunningContainer() error {
 	cli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
